@@ -18,8 +18,10 @@ use fields (
     'type',               # either $MAX or $MIN
     '_dbuf',              # doublePtr (wrapper for double*) buffer used internally for passing data to lprec structs
     '_dbufsize',          #  and its size
+    'lprec',              # the lprec structure used internally by the solver
+                          #   (Math::LP::Solve)
 );
-$VERSION = '0.01';
+$VERSION = '0.03';
 
 # only the package variables are made available for exporting
 @EXPORT = qw();
@@ -34,19 +36,19 @@ $EXPORT_TAGS{all} = [@{$EXPORT_TAGS{types}},
 
 BEGIN {
     # objective function types (not defined by LP_Solve)
-    $MAX = 0;
-    $MIN = 1;
+    *MAX = \0;
+    *MIN = \1;
     
     # solver states (exit states of LP_Solve's solve() and lag_solve())
-    $OPTIMAL         = $Math::LP::Solve::OPTIMAL;
-    $MILP_FAIL       = $Math::LP::Solve::MILP_FAIL;
-    $INFEASIBLE      = $Math::LP::Solve::INFEASIBLE;
-    $UNBOUNDED       = $Math::LP::Solve::UNBOUNDED;
-    $FAILURE         = $Math::LP::Solve::FAILURE;
-    $RUNNING         = $Math::LP::Solve::RUNNING;
-    $FEAS_FOUND      = $Math::LP::Solve::FEAS_FOUND;
-    $NO_FEAS_FOUND   = $Math::LP::Solve::NO_FEAS_FOUND;
-    $BREAK_BB        = $Math::LP::Solve::BREAK_BB;
+    *OPTIMAL         = \$Math::LP::Solve::OPTIMAL;
+    *MILP_FAIL       = \$Math::LP::Solve::MILP_FAIL;
+    *INFEASIBLE      = \$Math::LP::Solve::INFEASIBLE;
+    *UNBOUNDED       = \$Math::LP::Solve::UNBOUNDED;
+    *FAILURE         = \$Math::LP::Solve::FAILURE;
+    *RUNNING         = \$Math::LP::Solve::RUNNING;
+    *FEAS_FOUND      = \$Math::LP::Solve::FEAS_FOUND;
+    *NO_FEAS_FOUND   = \$Math::LP::Solve::NO_FEAS_FOUND;
+    *BREAK_BB        = \$Math::LP::Solve::BREAK_BB;
 }
 
 ### Object setup
@@ -97,38 +99,41 @@ sub nr_cols { # == nr variables
 sub add_variable { # assigns an index to new variables, returns the variable's index
     my Math::LP           $this = shift;
     my Math::LP::Variable $var  = shift;
-    unless(exists $this->{variables}->{$var->{name}}) { # new variable
-	$this->{variables}->{$var->{name}} = $var; # registers the variable
-	$var->{index} = $this->nr_cols(); # first variable gets 1, second 2, ...
+    if(exists $this->{variables}->{$var->{name}}) { # already registered variable
+	defined $var->{col_index} or
+	    $this->croak("A variable named `" . $var->{name} . "' has already been registered to the LP,\n"
+			 . "It seems though that the variable you are currently trying to register\n"
+			 . "differs from the already registered one (as col_index is undefined). Stopped"
+			 );
     }
-    return $var->{index};
+    else { # new variable
+	$this->{variables}->{$var->{name}} = $var; # registers the variable
+	$var->{col_index} = $this->nr_cols(); # first variable gets 1, second 2, ...
+    }
+    return $var->{col_index};
 }
 sub add_constraint { # does what it says, implicitly adds all the variables
     my Math::LP             $this   = shift;
     my Math::LP::Constraint $constr = shift;
 
     # register all variables present in the constraint
-    foreach(@{$constr->{lhs}->{vars_with_coeffs}}) {
-	$this->add_variable($_->{var});
-    }
+    $this->add_variable($_) foreach @{$constr->{lhs}->get_variables()};
 
     # register the constraint
     push @{$this->{constraints}}, $constr;
-    $constr->{index} = $this->nr_rows();
+    $constr->{row_index} = $this->nr_rows();
 
-    return $constr->{index};
+    return $constr->{row_index};
 }
 sub set_objective_function {
     my Math::LP $this = shift;
 
     # initialize the objective function and type
-    $this->{objective_function} = shift;
+    my $obj_fn = $this->{objective_function} = shift;
     $this->{type} = shift;
     
     # register all variables in the objective function
-    foreach(@{$this->{objective_function}->{vars_with_coeffs}}) {
-	$this->add_variable($_->{var});
-    }
+    $this->add_variable($_) foreach @{$obj_fn->get_variables()};
 }
 sub maximize_for { 
     $_[0]->set_objective_function($_[1],$MAX);
@@ -143,7 +148,11 @@ sub solve {
     my $lag_solve = shift || 0; # lag_solve flag
 
     # 1. construct an equivalent lprec struct
-    my $lprec = $this->make_lprec();
+    if(defined $this->{lprec}) { # remove previously built lprec
+	&Math::LP::Solve::delete_lp($this->{lprec});
+	$this->{lprec} = undef;
+    }
+    my $lprec = $this->{lprec} = $this->make_lprec();
     
     # 2. solve the LP
     $this->{solver_status} = $lag_solve 
@@ -155,8 +164,8 @@ sub solve {
     $this->update_slacks($lprec);
     $this->update_dual_values($lprec);
 
-    # 4. delete the lprec struct
-    Math::LP::Solve::delete_lp($lprec);
+    ### 4. delete the lprec struct
+    ##Math::LP::Solve::delete_lp($lprec);
 
     # 5. return true iff succeeded
     return $this->{solver_status} == $OPTIMAL; 
@@ -171,9 +180,7 @@ sub make_coeff_array {
         # +1 for the 0'th column, which does not represent a variable
 
     # fill out the coefficients
-    foreach(@{$lc->{vars_with_coeffs}}) {
-        Math::LP::Solve::ptrset($array,$_->{coeff},$_->{var}->{index});
-    }
+    Math::LP::Solve::ptrset($array,$_->{coeff},$_->{var}->{col_index}) foreach values %{$lc->get_entries()};
 
     return $array;
 }
@@ -181,7 +188,7 @@ sub make_lprec { # construct an lprec struct for the LP
     my Math::LP $this = shift;
     my $lprec = Math::LP::Solve::make_lp(0,$this->nr_cols()); # no constraints yet, correct nr. of variables
     
-    # add the constraints
+    # process all constraints
     foreach my $constr (@{$this->{constraints}}) {
         Math::LP::Solve::add_constraint($lprec,$this->make_coeff_array($constr->{lhs}),$constr->{type},$constr->{rhs});
 
@@ -190,12 +197,13 @@ sub make_lprec { # construct an lprec struct for the LP
 	#    if defined $constr->{name};
     }
 
-    # mark the integer variables 
+    # process all variables 
     foreach my $var (values %{$this->{variables}}) {
-        Math::LP::Solve::set_int($lprec,$var->{index},1) if $var->{is_int};
-
+	&Math::LP::Solve::set_int($lprec,$var->{col_index},1) if $var->{is_int};
+	&Math::LP::Solve::set_upbo($lprec,$var->{col_index},$var->{upper_bound});
+	&Math::LP::Solve::set_lowbo($lprec,$var->{col_index},$var->{lower_bound});
 	# Setting of the col name is disabled: it is not needed and triggered a bug I still do not understand
-	#Math::LP::Solve::lprec_col_name_set($lprec,$var->{index},$var->{name});
+	#Math::LP::Solve::lprec_col_name_set($lprec,$var->{col_index},$var->{name});
     }
 
     # set the objective function
@@ -225,7 +233,7 @@ sub update_variable_values { # copies the variable values to the variable object
 
     # copy the appropriate value for each variable
     foreach(values %{$this->{variables}}) {
-	my $var_index = $_->{index};
+	my $var_index = $_->{col_index};
 	$_->{value} = Math::LP::Solve::ptrvalue($solution,$offset+$var_index);
     }
 }
@@ -238,7 +246,7 @@ sub update_slacks {
 
     # copy the appropriate slack for each constraint
     foreach(@{$this->{constraints}}) {
-	my $row_index = $_->{index};
+	my $row_index = $_->{row_index};
 
 	# The net offset used for fetching the row slack is calculated as follows:
 	#   + 1 because of the objective function value
@@ -268,16 +276,85 @@ sub update_dual_values {
 
     # copy the appropriate dual value for each constraint
     foreach(@{$this->{constraints}}) {
-	my $row_index = $_->{index};
+	my $row_index = $_->{row_index};
 	$_->{dual_value} = Math::LP::Solve::ptrvalue($duals,$row_index)
     }
 }
 
-### Solution queries
+### Queries
 sub optimum {
     my Math::LP $this = shift;
     return undef if !defined($this->{objective_function});
     return $this->{objective_function}->{value};
+}
+
+sub get_constraints {
+    my Math::LP $this = shift;
+    wantarray ? @{$this->{constraints}} : $this->{constraints};
+}
+
+sub get_variables {
+    my Math::LP $this = shift;
+    my $rh_v = $this->{variables};
+    my @vars = map { $rh_v->{$_} } sort keys %$rh_v;
+    wantarray ? @vars : \@vars;
+}
+
+### IO
+sub stringify_lindo {
+    my Math::LP $this = shift;
+    my $str;
+
+    # the objective function
+    my $type = $this->{type};
+    if($type == $MAX) {
+	$str = 'max ';
+    }
+    elsif($type == $MIN) {
+	$str = 'min ';
+    }
+    else {
+	die "Found LP with unrecognized type. Stopped";
+    }
+    $str .= $this->{objective_function}->stringify() . "\n";
+
+    # the constraints
+    $str .= "subject to\n";
+    foreach(@{$this->{constraints}}) {
+	$str .= "  " . $_->stringify() . "\n";
+    }
+    $str .= "end\n";
+
+    # declaration of integer variables
+    foreach(grep { $_->{is_int} } @{$this->get_variables()}) {
+	$str .= "gin " . $_->{name} . "\n";
+    }
+
+    return $str;
+}
+
+sub stringify {
+    stringify_lindo(@_);
+}
+
+sub stringify_solution { # only to be used when solving succeeded
+    my $this = shift;
+    my $str = "Objective function value = " . $this->optimum . "\n\n";
+    $str .= "VARIABLES:\n";
+    $str .= sprintf("%-12s = %12g\n", $_->{name}, $_->{value}) for @{$this->get_variables()};
+    #$str .= $_->{name} . '=' . $_->{value} . "\n" for @{$this->get_variables()};
+    $str .= sprintf("\n%32s %12s %12s\n", 'ROW', 'SLACK', 'DUAL PRICE');
+    #$str .= "\nROW\tSLACK\tDUAL PRICE\n";
+    $str .= sprintf("%32s %12g %12g\n", "[" . ($_->{name} || $_->{row_index}) . "]", $_->{slack}, $_->{dual_value})
+	for @{$this->get_constraints()};
+    #$str .= "[" . ($_->{name} || $_->{index}) . "]\t" . $_->{slack} . "\t" . $_->{dual_value} . "\n" 
+    #	for @{$this->get_constraints()};
+    return $str;
+}
+
+sub print_solution {
+    my $this = shift;
+    print $this->stringify_solution();
 }
 
 1;
@@ -286,8 +363,7 @@ __END__
 
 =head1 NAME
 
-Math::LP - Object oriented interface to solving of linear programs using the
-lp_solve library
+Math::LP - OO interface to linear programs
 
 =head1 SYNOPSIS
 
@@ -460,17 +536,18 @@ More info on the packages used in Math::LP is found in L<Math::LP::Object>,
 L<Math::LP::Variable> and L<Math::LP::LinearCombination>.
 
 The underlying wrapper to the lp_solve library is documented in
-L<Math::LP::Solve>. More info on using the lp_solve library written
-by Michel Berkelaar and adapted by Jeroen Dirks is found in its source 
-code available from ftp://ftp.ics.ele.tue.nl/pub/lp_solve/
+L<Math::LP::Solve>. It is based on the lp_solve library written
+by Michel Berkelaar and adapted by Jeroen Dirks. Documentation
+on lp_solve is distributed with the source code, and can be
+downloaded at ftp://ftp.ics.ele.tue.nl/pub/lp_solve/
 
 =head1 AUTHOR
 
-Wim Verhaegen E<lt>wim.verhaegen@ieee.orgE<gt>
+Wim Verhaegen E<lt>wimv@cpan.orgE<gt>
 
 =head1 COPYRIGHT
 
-Copyright(c) 2000 Wim Verhaegen. All rights reserved. 
+Copyright(c) 2000-2001 Wim Verhaegen. All rights reserved. 
 This program is free software; you can redistribute
 and/or modify it under the same terms as Perl itself.
 

@@ -5,7 +5,7 @@ use fields qw();
 sub new { # constructs a new object
     my $pkg = shift;
     no strict 'refs';
-    my $this = bless [\%{"${pkg}::FIELDS"}], $pkg;
+    my Math::LP::Object $this = fields::new($pkg);
     my %arg = @_;
     while(my($k,$v) = each %arg) { $this->{$k} = $v; }
     $this->initialize();
@@ -36,17 +36,22 @@ Math::LP::Object - base class for objects in the Math::LP family
 
 =head1 SYNOPSIS
 
-    package Math::LP::XXX; # a new member XXX in the family
+    package Math::LP::Foo; # a new member Foo in the family
 
-    # derive XXX from Object
+    # derive Foo from Object
     use Math::LP::Object;
     use base qw(Math::LP::Object);
     use fields qw(foo bar);
 
     sub initialize {
-        my Math::LP::XXX $this = shift;
-        # put XXX specific initialization code here
+        my Math::LP::Foo $this = shift;
+        # put Foo specific initialization code here
+	# ...
+	return 1;
     }
+
+    # And add Foo-specific methods
+    # ...
 
 =head1 DESCRIPTION
 
@@ -74,17 +79,25 @@ croak() can be invoked both as a method and a package function.
 
 =back
 
+=head1 KNOWN PROBLEMS
+
+The fields pragma is used here, which makes multiple inheritance
+impossible when other base classes also use the fields pragma
+(see L<fields>). For this reason, Math::LP::LinearCombination
+and Math::LP::Variable are NOT derived from Math::LP::Object, and
+as a result have no access to the functionality the latter provides.
+
 =head1 SEE ALSO
 
 L<base>, L<fields>
 
 =head1 AUTHOR
 
-Wim Verhaegen E<lt>wim.verhaegen@ieee.orgE<gt>
+Wim Verhaegen E<lt>wimv@cpan.orgE<gt>
 
 =head1 COPYRIGHT
 
-Copyright(c) 2000 Wim Verhaegen. All rights reserved. 
+Copyright(c) 2000-2001 Wim Verhaegen. All rights reserved. 
 This program is free software; you can redistribute
 and/or modify it under the same terms as Perl itself.
 

@@ -4,10 +4,14 @@ use ExtUtils::MakeMaker;
 WriteMakefile(
     'NAME'	   => 'Math::LP',
     ($] > 5.004) ? (
-      'ABSTRACT'  => 'OO approach to solving linear problems (interfaces to Math::LP::Solve)',
-      'AUTHOR'    => 'Wim Verhaegen <wim.verhaegen@ieee.org>',
+      'ABSTRACT'  => 'OO interface to linear programs',
+      'AUTHOR'    => 'Wim Verhaegen <wimv@cpan.org>',
     ) : (),
-    'PREREQ_PM'    => { 'Math::LP::Solve' => '3.02' },
+    'PREREQ_PM'    => { 
+	'Math::LP::Solve'         => '3.02', # wrapper around the solver algorithm
+	'Math::LinearCombination' => '0.01', # for setting up constraints
+	'Math::SimpleVariable'    => '0.01', # for representing variables
+     },
     'VERSION_FROM' => 'lib/Math/LP.pm', 
     'clean'        => {
 	FILES => '*/*/*/*~ */*/*/*/*~ */*/*/*/*/*~ */*/*/*/*/*/*~'

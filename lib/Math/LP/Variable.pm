@@ -1,19 +1,23 @@
 package Math::LP::Variable;
 use strict;
-use Math::LP::Object;
-use base qw(Math::LP::Object);
+#use Math::LP::Object;
+use Math::SimpleVariable;
+use base qw(Math::SimpleVariable);
 use fields(
-    'name',   # a string, required
-    'is_int', # flags whether it is an integer variable, defaults to false
-    'value',  # numerical value, optional
-    'index',  # column index in an LP, used by the Math::LP functions
+    'is_int',      # flags whether it is an integer variable, defaults to false
+    'upper_bound', # defaults to +infinity
+    'lower_bound', # defaults to 0, as is the convention in linear programming
+    'col_index',   # column index in an LP, used by the Math::LP functions
 );
 
 sub initialize {
     my Math::LP::Variable $this = shift;
-    defined($this->{name}) or 
-	$this->croak("No name given for Math::LP::Variable");
     $this->{is_int} ||= 0;
+    $this->{upper_bound} = $Math::LP::Solve::DEF_INFINITE 
+	unless defined($this->{upper_bound});
+    $this->{lower_bound} = 0 
+	unless defined($this->{lower_bound});
+    $this->SUPER::initialize();
 }
 
 1;
@@ -56,7 +60,15 @@ a flag indicating whether the variable can only have integer values
 
 a number representing the value of the variable (optional)
 
-=item index
+=item upper_bound
+
+an upper bound to the value, defaults to 1E24
+
+=item lower_bound
+
+a lower bound to the value, defaults to 0
+
+=item col_index
 
 an integer number holding the index of the variable in the matrix of the
 LP the variable is used in (optional)
@@ -65,19 +77,22 @@ LP the variable is used in (optional)
 
 =head2 METHODS
 
-No methods available.
+Math::LP::Variable inherits all methods from Math::SimpleVariable, without
+adding any new methods.
 
 =head1 SEE ALSO
 
-L<Math::LP> and L<Math::LP::Object>
+More info on the base class is found in L<Math::SimpleVariable>.
+The usage of Math::LP::Variables in linear programs is illustrated
+in L<Math::LP>.
 
 =head1 AUTHOR
 
-Wim Verhaegen E<lt>wim.verhaegen@ieee.orgE<gt>
+Wim Verhaegen E<lt>wimv@cpan.orgE<gt>
 
 =head1 COPYRIGHT
 
-Copyright(c) 2000 Wim Verhaegen. All rights reserved. 
+Copyright(c) 2000-2001 Wim Verhaegen. All rights reserved. 
 This program is free software; you can redistribute
 and/or modify it under the same terms as Perl itself.
 
